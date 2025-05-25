@@ -1,0 +1,60 @@
+.program injection
+;
+;        SPDX-License-Identifier: BSD-3-Clause
+;
+;        Copyright (c) 2025, Dennis B. Lewis
+;        All rights reserved.
+;        This file contains modifications to software originally licensed under the
+;        BSD-3-Clause license by the Raspberry Pi Foundation.
+;        See LEGAL.TXT in the root directory of this project for more details.
+;                                       END OF LEGAL
+;
+; THEORETICALLY IF THE RP2350 WERE OPERATING AT A HIGHER CLOCK SPEED AND YOU FOUND FASTER RAM EQUIVALENT OR 
+;       FASTER THAN A CY14B101LA-SP25XI YOU COULD BEAT OR EXEED THE OKI RESPOSE RATE ON AN OBD1 ECU.
+;           MODIFY THIS ASSEMBLY AND HELPER SCRIPT AS YOU SEE FIT FOR YOUR PROJECT DURING YOUR FORK. 
+;                               (FOLLOW LEGAL FROM LEGAL.TXT OR ABOVE).
+; (clearly the ASM can be reduced and refactored as needed however not much will change from this final ASM)
+
+; UNKNOWN = set up time for mutexes, data retrieval and bit manipulation operations on core 1.
+
+.wrap_target
+    set pins, 0b111 ; Set the (CE, WE, OE) in respective states based on 1, 1, 1... telling injection hardware we do not want to read, write or activate (+5ns) (5ns)
+    pull block      ; Wait for data and pull data over the RX FIFO from the CPU if available or not blocked. (+5ns - ?) (UNKNOWN)
+    out null, 8     ; Move 8 bits of data out of the FIFO and put it in to null and or left shift five. (puts MSB on 32nd bit) (+5ns) (10ns)
+    out x, 24       ; Copy 24 bits out of the (FIFO) -> (X) register for next 27 bits (+5ns) (15ns)
+    mov pins, x     ; Copy the (X) -> (PINS) effectively setting the pins to (WE)+(ADDRESS)+(DATA) (+5ns) (20ns)
+                    ; 5ns stabalization time between (mov pins x) -> (set pins 0b001)
+    set pins, 0b001 ; Set the (CE, WE, OE) in respective states based on 0, 0, 1... telling the injection hardware we want to activate, write, BUT not read (+5ns) (25ns)
+    nop[5]          ; Add time here if chip needs more time to set up write (25ns of set up time CY14B101LA-SP25XI) (+25ns) (50ns)
+    set x, 0        ; Zero out the X register (+5ns) (55ns)
+    set pins, 0b011 ; Set the (CE, WE, OE) in respective states based on 0, 1, 1... signifying to injection hardware we are done writing (+5ns) (60ns)    
+    mov pins, x     ; Set all the pins in a LOW state and allow write to finalize. (include nops as needed if chip need extra time) (+5ns) (65ns) + (UNKNOWN)
+.wrap
+
+% c-sdk {
+// DO NOT touch below unless you absolutely have to. Helper script for setting up ASM.
+  
+void injection_program_init(PIO pio, 
+                            uint state_machine, 
+                            int offset, 
+                            uint8_t pin_start,
+                            uint8_t pin_count,
+                            float div){
+
+    pio_sm_config c = injection_program_get_default_config(offset);
+    sm_config_set_out_shift(&c, false, false, 32);
+    sm_config_set_out_pins(&c, pin_start, pin_count);
+    sm_config_set_set_pins(&c, pin_start + pin_count, 3);
+    for (uint i = pin_start; i < (pin_count); i++){
+        pio_gpio_init(pio, i);
+    }
+    for (uint i = 0; i < 3; i++){
+        pio_gpio_init(pio, i + pin_start + pin_count);
+    }
+    pio_sm_set_consecutive_pindirs(pio, state_machine, pin_start, pin_count + 3, true);
+    sm_config_set_clkdiv(&c, div);
+    pio_sm_init(pio, state_machine, offset, &c);
+}
+%}
+
+
