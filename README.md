@@ -1,10 +1,28 @@
 # Aetherion-2350
-### *(Ostrich 2.0 Emulation for RP2350 - aka "Feather Puller")*
+### *(Ostrich 2.0 Emulation for RP2350 - aka "BitStream")*
 
 ![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Platform: RP2040](https://img.shields.io/badge/platform-RP2040-orange)
-![Version](https://img.shields.io/badge/version-1.0.0-informational)
+![Version](https://img.shields.io/badge/version-1.2.8-informational)
+
+## Version 1.2.8 additions and subtractions:
+- **Manual Reset**: Drag and drop contents from /testing/manual_reset/ flash this onto a seperate RP2 device and connect the wires accordingly to your emulator.
+- **Fixed bug**: Removed start_log function, piped COMPORT datalog datum to read_and_forward function (ostrich.c). Performs complete mediation and not partial mediation.
+- **Feature**: Corrected "Waiting for x:/ to open..." loop when developer COMPORT is occupied.
+- **Feature**: Added in signal lights for error, read/write, and USB activity.
+- **Major correction**: injection.c had huge risky bug where data could be reset mid way (probably could never happen although it was corrected)
+- **Major feature**: Included "core alive" detection for when device eventually fails. Error handling and detection for both cores.
+- **Minor removal**: Removed, setting function to time critical for developer resets (developer_reset.c). This effectively cannot serve a real purpose beyond developement.
+- **Minor bug**: Fixed bug around bank settings. (perhaps more to follow?)
+- **Minor Feature**: start up LED animation
+- **Other minor improvments**: code correction, refactoring, optimization, etc... Should work better with customized boards.
+
+## Future Version:
+- **Add button to Deployment GUI for Manual Resetting**
+- **Clean up code and comments**
+- **Add code comments to python files**
+- **Refactor More**
 
 > Fully emulated Ostrich 2.0 Protocol stack for RP2350 devices. Features developer tooling, flashing utilities, and RAM injection for high-speed tuning. 
   --- *Replace that which is old, with cutting edge.*
@@ -33,6 +51,9 @@ Say goodbye to overpriced proprietary systems like "Snake", "Hondavert", "Demon"
 - Byte-based device control:
   - `0x2202` = Reset  
   - `0x2201` = Full Wipe
+- /testing/manual_reset:
+  - `r\r` = Reset Device from PuTTY or Script  
+  - `b\r` = Bootload Device from PuTTY or Script
 - Overclock support up to **+200 MHz** (**5 nanosecond execution**)
 - Secondary RP2040 **Datalog Emulation** device
 - Custom USB descriptors - personalize your plug-in name!

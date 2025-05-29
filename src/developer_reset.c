@@ -22,7 +22,6 @@ uint32_t* mutex_holder; // create a 32bit unsigned int for holding mutex owner d
 Obtains the binary in use mutex and holds it until device reset.
 This ensures that both cores are locked and non-functioning until reset.
 */
-__not_in_flash("close_binary_in_use")
 void close_binary_in_use(){
     while (1){                                                                          // Sets loop until break.
         if (!mutex_try_enter(&tune_data.tune_flag, mutex_holder)){                      // Tries to obtain mutex (does not release)
@@ -35,7 +34,6 @@ void close_binary_in_use(){
 Obtains the bool in use mutex and holds it until device reset.
 This ensures that both cores are locked and non-functioning until reset.
 */
-__not_in_flash("close_bool_in_use")
 void close_bool_in_use(){
     while (1){                                                                          // Sets loop until break.
         if (!mutex_try_enter(&ostrich_usb.data_flag, mutex_holder)){                    // Tries to obtain mutex (does not release)
@@ -49,7 +47,6 @@ Performs a device reset after flashing pin 25:
 END DEVELOPER: you will need to change pin 25 to some LED pin on your board.
 If you wish to *see* a device reset take place with some LED. 
 */
-__not_in_flash("set_reset")
 void set_reset(uint8_t* command){
     if (!DEVELOPER_CONSOLE){return;}                                                    // Perform security check
     // Checks if default LED pin is defined
@@ -73,7 +70,6 @@ END DEVELOPER: you will need to change pin 25 to some LED pin on your board.
 If you wish to *see* a device reset take place with some LED. 
 This does not flash clean and reboot if not running from RAM. (bottom of CMakeLists.txt)
 */
-__not_in_flash("set_clean")
 void set_clean(uint8_t* command){
     if (!DEVELOPER_CONSOLE){return;}                                                    // Perform security check
     uint flash_size_bytes;

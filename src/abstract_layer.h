@@ -63,9 +63,9 @@ if AutoStore is enabled: it has automatic storing upon power down.
 */
 
 // // Available pins for use.
-
-// const uint8_t GP31 = 31;  // Use for what you want!
-// const uint8_t GP32 = 32;  // Use for what you want!
+// const uint8_t GP30 = 30;  // Reserved for LEDs (check abstract_layer.c)
+// const uint8_t GP31 = 31;  // Reserved for LEDs (check abstract_layer.c)
+// const uint8_t GP32 = 32;  // Reserved for LEDs (check abstract_layer.c)
 // const uint8_t GP33 = 33;  // Use for what you want!
 // const uint8_t GP34 = 34;  // Use for what you want!
 // const uint8_t GP35 = 35;  // Use for what you want!
@@ -116,9 +116,15 @@ example datalog buffer, decode if you wish.
 Abstractions of methods used to achieve data I/O
 (I would probably call this in Ostrich.c in the 
 ostrich_init function before the loop if used.)
+Examples below to initialize this header file.
 */
+#define USB_LED  (uint8_t[2]){30, GPIO_OUT}  // USB_LED: display when packets are sent over the USB
+#define RW_LED   (uint8_t[2]){31, GPIO_OUT}  // read/write LED: show when read write operation happends
+#define ERR_LED  (uint8_t[2]){32, GPIO_OUT}  // error/fault LED: displays if there is a fault 
 
 void initialize_pins();
 void deinitialize_pins();
-
+void toggle_usb_led();
+void toggle_err_led();
+void toggle_rw_led();
 #endif

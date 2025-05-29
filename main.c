@@ -101,7 +101,6 @@ int main(){
     conditional();
     exit_block();
     start_emulate();
-    // send_error();                                                                    // User can handle some function for exception
     return 0;
 }
 

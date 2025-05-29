@@ -36,7 +36,8 @@ if (!mutex_try_enter(&ostrich_usb.data_flag, owner)){
 }
 */
 shared_bool_t ostrich_usb = {
-    .data_ready = false
+    .data_ready = false,
+    .keep_alive = false
 };
 
 /*

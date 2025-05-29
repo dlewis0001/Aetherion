@@ -21,7 +21,7 @@ class SimulateEngineUnit:
         if not data:
             return
 
-        if data == b'\x10\x00' or data == b'\x10\x10':
+        if data == b'\x10\x00':
             self.uart.write(bytes([self.ready]))  # send 1-byte "ready" signal
         elif data == b'\x20\x00':
             self.create_random()

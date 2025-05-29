@@ -15,7 +15,7 @@ import threading
 import serial
 
 OUTPUT_FILE = "tune_file.bin"
-COMPORT = "COM32"
+COMPORT = "COM20"
 BAUDRATE = 115200
 
 class DownloadBin():
@@ -59,15 +59,14 @@ class CleanBuild:
     def __init__(self):
         self.create_files = 'cmake -G "MinGW Makefiles" ..'
         self.build_firmware = 'mingw32-make'
-        self.dev_com_port = 'COM30'
-        self.drive_path = 'F:/'
+        self.dev_com_port = 'COM19'
+        self.drive_path = 'D:/'
         self.uf2_file = 'Aetherion-v1.0.uf2'
         self.root_dir()
         self.home_directory = os.getcwd()
         self.build_directory = f'{self.home_directory}/build'
 
     def root_dir(self):
-        '''cd out of current and go to root'''
         self.run_command('cd ..')
     
     def drive_available(self):
@@ -145,6 +144,7 @@ class CleanBuild:
         while not os.path.exists(self.drive_path):
             os.system('cls')
             print(f'Waiting for {self.drive_path} to open...')
+            self.reset_pico()
         self.deploy_firmware()
 
     def clean_build(self):
@@ -154,6 +154,7 @@ class CleanBuild:
         while not os.path.exists(self.drive_path):
             os.system('cls')
             print(f'Waiting for {self.drive_path} to open...')
+            self.reset_pico()
         self.deploy_firmware()
 
     def reuse_build(self):
@@ -162,6 +163,7 @@ class CleanBuild:
         while not os.path.exists(self.drive_path):
             os.system('cls')
             print(f'Waiting for {self.drive_path} to open...')
+            self.reset_pico()
         self.deploy_firmware()
 
 

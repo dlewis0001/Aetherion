@@ -35,6 +35,7 @@ Structure for the USB CONNECTION mutex:
 typedef struct {
     mutex_t data_flag;
     volatile bool data_ready;
+    volatile bool keep_alive;
 } shared_bool_t;
 
 /*

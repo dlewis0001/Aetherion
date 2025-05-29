@@ -8,10 +8,14 @@
 *        See LEGAL.TXT in the root directory of this project for more details.
 */
 #include <stdlib.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "injection.pio.h"
 #include "mutexes.h"
 #include "pico/multicore.h"
+#include "developer_tools.h"
+#include "abstract_layer.h"
+#include "tusb.h"
 /*
 Example for assembly program written below however the end developer can write their own how they see fit.
 Methodology:
@@ -27,10 +31,12 @@ static uint16_t address;                                                        
 static bool connected;                                                                  // Temp connection status
 static uint32_t* owner;                                                                 // Dummy place holder for mutex owner
 static uint8_t macro_data;                                                              // 32kb data to send to RAM
-static uint8_t micro_data;                                                              // 256byte data to send to RAM
-static uint8_t amount;                                                                  // Amount to write during micro writes
+static uint16_t amount;                                                                 // Amount to write during micro writes
 static bool success;                                                                    // Checks if data from mutex was retrieved
 static uint8_t bank;                                                                    // Activates extra bank pin
+static uint8_t* micro_buffer;                                                           // Add a buffer for micro data
+static uint32_t alive_counter;                                                          // Bad guy points record
+static bool is_alive;
 static PIO pio;                                                                         // Pio statemachine select as pio0
 
 
@@ -49,15 +55,17 @@ void get_macro_data(){
 }
 
 /*
-Gets 1 byte from the 256 available buffer size from tune_data.tune_binary 
+Gets 1-256 byte(s) from the 256 available buffer size from tune_data.tune_binary 
 guarded var by mutex. sets micro data to the dereferenced value of tune_data.
 */
 void get_micro_data(){
+    const void* address_ptr;                                                            // Create var for storing ptr (anti compiler flag)
     while (1){                                                                          // This loop definitly returns
         multicore_lockout_victim_init();                                                // related to flash writing
         if (mutex_try_enter(&tune_data.tune_flag, owner)){                              // Obtain a mutex for binary use
             start_address = tune_data.tune_byte_start;                                  // Copies the start address
-            micro_data = *(tune_data.tune_binary + start_address + address);            // Adds some offsets and dereference set to micro data
+            address_ptr = (const void *)(tune_data.tune_binary + start_address);        // Store in ptr to keep code comments unfactored
+            memcpy(micro_buffer, address_ptr, amount);                                  // Memory copy from that address to data amount
             mutex_exit(&tune_data.tune_flag);                                           // Exit mutex 
             return;                                                                     // Return that we got some data
         }        
@@ -68,20 +76,20 @@ void get_micro_data(){
 Gets the amount value of tune_data.amount. this is later used to decide 
 to inject and how much to inject. value ranges from 1 - 256 bytes.
 */
-uint16_t get_amount(){
-    uint16_t amount_value;
+void get_amount(){
     while (1){                                                                          // Loop until mutex achieved
         multicore_lockout_victim_init();                                                // If flash write: go and loop here
         if (mutex_try_enter(&tune_data.tune_flag, owner)){                              // Obtain a mutex for binary use
-            amount_value = tune_data.amount;                                            // Get the amount value to decide on inject or (not to) or to break
+            amount = tune_data.amount;                                                  // Get the amount value to decide on inject or (not to) or to break
             mutex_exit(&tune_data.tune_flag);                                           // Exit mutex gracefully like an angle
-            return amount_value;                                                        // Definitely break out of loop
+            return;
         }        
     }    
 }
 
 /*
 Normalizes tune_data.amount to prevent continous write operations.
+Yes, could theoretically overwrite tune_data.amount although timing is faster than 200us.
 tune_data.amount = 0
 */
 void set_amount(){
@@ -160,7 +168,7 @@ Used only with micro_injection().
 void create_micro_payload(){
     injection_data = 0;                                                                 // make sure to reset before building
     injection_data |= ((uint32_t)(address + start_address) & 0x7FFF) << 8;              // set bits 8–22 to address (15 bits)
-    injection_data |= ((uint32_t)micro_data & 0xFF);                                    // set bits 0–7 to data (8 bits) (15 + 8 - 1)
+    injection_data |= ((uint32_t)(micro_buffer[address]) & 0xFF);                       // set bits 0–7 to data (8 bits) (15 + 8 - 1)
     if (bank){                                                                          // Check which bank we are emulating from
         injection_data |=  (1U << 23);                                                  // set 23rd bit address pin for dual bank or single
         return;                                                                         // return if bank 1
@@ -187,23 +195,41 @@ void macro_injection(){
 Real time update, writes 1:256 bytes at a time.
 */
 void micro_injection(){
-    uint16_t check;
+    get_micro_data();                                                                   // See if we can get 1-256 byte(s) of data  
     while (address != amount){                                                          // Loop until 2**15 has been achieved (32kb)
-        multicore_lockout_victim_init();                                                // Set the break area for core 0
-        get_micro_data();                                                               // See if we can get 1 byte of data
-        check = get_amount();                                                           // See if amount changed from the current
-        if (check != amount){                                                           // So we are not writing stale data
-            address = 0;                                                                // If its stale reset address
-            return;                                                                     // exit function
-        }                                                                               
+        multicore_lockout_victim_init();                                                // Set the break area for core 0                                                                           
         create_micro_payload();                                                         // If successful create a payload with address+data(concat)
         pio_sm_put_blocking(pio, 0, injection_data);                                    // Send that payload over the FIFO to be injected
         address++;                                                                      // Add 1 to address and get the next byte of data...        
     }                                                                                   // break when all bytes have been written.
-    set_amount();                                                                       // set the new amount if any
-    address = 0;                                                                        // set address to zero for reuse
+    memset(micro_buffer, 0, 256);                                                       // Wash our dirty little hands lol  
+    set_amount();                                                                       // Set the new amount if any
+    address = 0;                                                                        // Set address to zero for reuse
 }
 
+/*
+Checks on core 0 working status, returns false if core 0 has ran into an error.
+*/
+static bool core_alive(){
+    while (1){
+        if (mutex_try_enter(&ostrich_usb.data_flag, owner)){                            // Capture the flag
+            is_alive = ostrich_usb.keep_alive;                                          // See if core 0 is twitching
+            ostrich_usb.keep_alive = true;                                              // Set the keep alive to tell core 0 we alive here
+            mutex_exit(&ostrich_usb.data_flag);                                         // Have some dignity
+            break;                                                                      // break the chain
+        }        
+    }
+    if (is_alive){                                                                      // Check if core 0 is alive
+        alive_counter++;                                                                // Add a bad guy check mark
+    }
+    else{
+        alive_counter = 0;                                                              // if core is alive reset counter
+    }
+    if (alive_counter >= 1000000){                                                      // Set alive really high because core 1 is fast
+        return false;                                                                   // return false
+    }
+    return true;                                                                        // return true if we dont return false
+}
 /*
 Writes to Random Access Memory on PCB from core 1 of RP2 device.
 Using either state machines or analog depending on the use case.
@@ -216,34 +242,32 @@ MCU Injection Specs:
 (Can only be achieved cleanly in Assembly (ASM))
 */
 void inject_memory(){
-    pio = pio0;                                                                         // Specify which pio instance we will use.
-    macro_data = 0;                                                                     // zero out macro data
-    micro_data = 0;                                                                     // zero out micro data
-    address = 0;                                                                        // zero out address
+    pio = pio0;                                                                         // Specify which pio instance we will use.     
+    micro_buffer = malloc(256);                                                         // Cut out some memory for RTP
     injection_program_init(pio, 0,                              
     pio_add_program(pio, &injection_program), 2, 24, 1);                                // Initalize the helper script and assembly
     pio_sm_set_enabled(pio, 0, true);                                                   // Enable pio instance zero in state machine zero 
     while (1){                                                                          // Enter Core 1 primary loop (never exits... ever)
         multicore_lockout_victim_init();                                                // set the victim state for blocking during flash write
         get_bank();                                                                     // get the bank data
-        amount = get_amount();                                                          // gets amount of data for micro injection
+        get_amount();                                                                   // gets amount of data for micro injection
         get_connected();                                                                // If the USB is connected set local variable "connected"  to true.
         if (connected && !amount){macro_injection();}                                   // checks connection without amount for macro injection
         if (amount){micro_injection();}                                                 // if data resides in the 256 buffer init a micro inject
-    }// Why you looking here the loop doesnt break... ever.
-}// Neither does the function......
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Not here either. the loop is forever. the loop is love.
+        if (!core_alive()){break;}                                                      // check if core 0 is alive if not alive break and show error light
+    }
+    while (1){
+        /*
+        Technically doesnt need a mutex
+        if no core to provide race condition.
+        !!!USB IRQs are served by core 0!!!
+        No COMs if core 0 crashes sorry :/
+        Activate ERROR_LED here!
+        */
+        for (uint8_t i = 0; i < 2; i++){                                                // Blink once every second to indicate core 0 or first core
+            toggle_err_led();                                                           // toggle the ERROR light
+            sleep_ms(250);                                                              // Wait for user to see shiny
+        }
+        print("CORE_0 ERROR: Ostrich timed out.", -1, false);                           // tell if core 0 still alive DEV-COM out that core 0 errored out
+    }
+}

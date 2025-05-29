@@ -50,7 +50,9 @@ connected variable is used for injection synchronizing.
 upload_count is used for measuring when to write to flash.
 */
  
-static bool connected; 
+static bool connected;
+static bool is_alive;
+static uint16_t alive_counter;
 static uint32_t* owner; 
 static uint64_t start_time;   
 static uint8_t upload_count;                                                
@@ -170,7 +172,7 @@ void send_corrupt(){
 Reads bytes with a time out to ensure no bytes get left behind.
 */
 void read_bytes(uint8_t* byte, uint32_t start, uint32_t amount){                        // Read bytes and put then into command pointer
-    uint16_t ms = 50;                                                                   // Set timeout
+    uint16_t ms = 50;                                                                  // Set timeout
     uint32_t bytes_read = 0;                                                            // Set amount of bytes read
     uint64_t start_time = time_us_64();                                                 // Set current time
     while ((time_us_64() - start_time) < (ms * 1000)){                                  // Check for condition of current time being greater than timeout
@@ -218,7 +220,7 @@ Changes the vendor ID byte when command is received
 */
 void change_vendor(uint8_t* command){
     read_bytes(command, 2, 9);                                                          // Read bytes and put then into command pointer
-    uint8_t cs = checksum(command, 10);                                              // Process checksum
+    uint8_t cs = checksum(command, 10);                                                 // Process checksum
     bool check_sum_match = (cs == command[10]);                                         // Compair checksums gives bool to var
     bool serial_match;                                                                  // Create serial match bool var
     for (uint8_t i = 0; i < 8; i++){                                                    // Iterate 8 times starting from 0
@@ -300,9 +302,10 @@ void post_vendor(uint8_t* command){
 BR: Sets the bank to read and write from.
 */
 void bank_select(uint8_t* command){
-    uint8_t cs = checksum(command, 2);                                                  // Checksum the command
-    if (cs != command[2]){                                                              // Is data corrupt?
-        send_corrupt();                                                                 // Say data is corrupt
+    read_bytes(command, 3, 1);                                                          // Grab that checksum
+    uint8_t cs = checksum(command, 3);                                                  // Checksum the command
+    if (cs != command[3]){                                                              // Is data corrupt?
+        send_corrupt();                                                                 // Say data is corrupt (BMTUNE literally ignores this)
         return;                                                                         // return to command processing
     }
     persist_bank = command[2];                                                          // else... set persistant bank
@@ -313,8 +316,9 @@ void bank_select(uint8_t* command){
 BE: Select a volitile bank to emulate from.
 */
 void bank_select_v(uint8_t* command){
-    uint8_t cs = checksum(command, 2);                                                  // Little redundant could refactor (checksum)
-    if (cs != command[2]){                                                              // Validate checksum
+    read_bytes(command, 3, 1);                                                          // Get the checksum
+    uint8_t cs = checksum(command, 3);                                                  // Little redundant could refactor (checksum)
+    if (cs != command[3]){                                                              // Validate checksum
         send_corrupt();                                                                 // Send BMTune a "Nope"
         return;                                                                         // Get on with my day.
     }
@@ -326,8 +330,9 @@ void bank_select_v(uint8_t* command){
 BS: Sets persistant bank data.
 */
 void bank_persist(uint8_t* command){
-    uint8_t cs = checksum(command, 2);                                                  // Definitely will need a refactor (checksum)
-    if (cs != command[2]){                                                              // Check for inequality
+    read_bytes(command, 3, 1);                                                          // read the checksum value
+    uint8_t cs = checksum(command, 3);                                                  // Definitely will need a refactor (checksum)
+    if (cs != command[3]){                                                              // Check for inequality
         send_corrupt();                                                                 // If .9 on the dollar send corrupt
         return;                                                                         // Go back home and cry
     }
@@ -460,6 +465,7 @@ uint16_t bulk_address(uint8_t msb, uint8_t lsb){
 Processes command for a short or small 1-256 read from device.
 */
 void micro_read(uint8_t* command){                                                      // R[0], n[1] + MSB[2] + LSB[3] + CS[4]
+    toggle_rw_led();                                                                    // Show we are reading from on chip ram
     uint8_t cs;                                                                         // Create checksum variable
     read_bytes(command, 2, 2);                                                          // Read bytes and put then into command pointer
     uint16_t length = length256(command[1]);                                            // Create dynamic length based on command sequence
@@ -480,12 +486,14 @@ void micro_read(uint8_t* command){                                              
             break;                                                                      // Break
         }        
     }
+    toggle_rw_led();                                                                    // dont attract moths while i code
 }
 
 /*
 Processes command for a short or small 1-256 write to device.
 */
 void micro_write(uint8_t* command){                                                     // W[0], n[1], MSB[2], LSB[3], bytes[n] checksum[lim~bytes[n] + 1]
+    toggle_rw_led();                                                                    // Turn on read/write indicatior
     uint16_t length = length256(command[1]);                                            // Create dynamic length based on command sequence
     read_bytes(command, 2, (uint32_t)(length + 2));                                     // Read bytes and put then into command pointer
     uint16_t start_address = micro_address(command[3], command[2]);                     // Concat start address and subtract 2^15
@@ -506,12 +514,14 @@ void micro_write(uint8_t* command){                                             
     save_with_blocking(start_address, flash_temp, true);                                // Save with blocking to ensure core 1 doesnt crash
     micro_update_mutexes(start_address, length);                                        // Update the micro mutexes for micro injection
     send_confirm();                                                                     // send confirmation (ready for the next bytes)
+    toggle_rw_led();                                                                    // Turn off read/write indicatior
 }
 
 /*
 Processes command for large bulk read (256 - 4096) bytes from device.
 */
 void bulk_read(uint8_t* command){                                                       // Z[0], R[1], n[2], MMSB[3], LSB[4], Checksum[5]
+    toggle_rw_led();                                                                    // Turn on read/write indicatior
     uint8_t cs;                                                                         // Create checksum variable
     read_bytes(command, 2, 3);                                                          // Read bytes and put then into command pointer
     uint16_t length = (uint16_t)command[2] * 256;                                       // Create dynamic length based on command sequence
@@ -532,12 +542,14 @@ void bulk_read(uint8_t* command){                                               
             break;                                                                      // End loop!
         }        
     }
+    toggle_rw_led();                                                                    // Turn off read/write indicatior (blinker fluid dependancy)
 }
 
 /*
 Processes command for large bulk write of (256 - 4096) bytes into device.
 */
 void bulk_write(uint8_t* command){                                                      // Z[0], W[1], n[2], MMSB[3], MSB[4], bytes[n], checksum[lim~bytes[n] + 1]
+    toggle_rw_led();                                                                    // Turn on read/write indicatior
     read_bytes(command, 2, 1);                                                          // Read bytes and put then into command pointer
     uint16_t length = (uint16_t)command[2] * 256;                                       // Create dynamic length based on command sequence
     read_bytes(command, 3, (uint32_t)(length + 2));                                     // Read bytes and put then into command pointer
@@ -561,6 +573,7 @@ void bulk_write(uint8_t* command){                                              
     save_with_blocking(start_address, flash_temp, true);                                // Save with blocking to not crash core 1
     send_confirm();                                                                     // Send confirmation (ready for the next bytes)
     upload_count++;                                                                     // Update the upload count
+    toggle_rw_led();                                                                    // light show done!
 }
 
 /*
@@ -591,25 +604,6 @@ void transact(uint8_t* datalog_buffer, uint8_t* count, uint8_t size){           
     }                                                                                   // NOTE*: the timeout can be decreased if you need more data quicker.
     tud_cdc_n_write(1, datalog_buffer, *count);                                         // Write the data from the ECU to the buffer
     tud_cdc_n_write_flush(1);                                                           // Flush that data to the Tuning software (very fast actually)
-}
-
-/*
-Start the transaction for datalogging. This pushes data from the COMPORT over to the 
-TX/RX buffer towards the ECU to perform requests for starting or restarting logging.
-*/
-void start_log(uint8_t* command){
-    uint8_t size = 1;                                                                   // We expect to get 1 byte back (0xCD)
-    uint8_t count = 0;                                                                  // The bytes we currently have
-    uint8_t datalog_buffer[size];                                                       // Our buffer to capture said byte
-    uint8_t start_command[2] = {0x10, 0x00};                                            // Start command byte
-    uint8_t restart_command[2] = {0x10, 0x10};                                          // Restart command byte (maybe i hallucinated this one)
-    if (command[0] == 0x10){                                                            // If the real command starts with 0x10 then send start_command
-        uart_write_blocking(UART_ID, start_command, 2);                                 // Sends start command over to the ECU
-    }
-    else{
-        uart_write_blocking(UART_ID, restart_command, 2);                               // If not then reset. (probably not needed)
-    }
-    transact(datalog_buffer, &count, size);                                             // Send what the ECU said to the Computer
 }
 
 /*
@@ -663,10 +657,37 @@ uint16_t execute_command(Command* command_list,uint8_t* command){               
     uint16_t two_key = ((command[0] << 8) | command[1]);                                // Concat start byte with end byte
     uint16_t one_key = ((command[0] << 8) | 0x00);                                      // Concat start byte with no byte
     if (!two_key){return 0;}                                                            // check for all zero key two, return if its all zeros nothing will execute
+    toggle_usb_led();                                                                   // show that some data was received
     print("Command: ", (uint32_t)two_key, true);                                        // prints out the key to Developer COMPORT
     if (!search_command(command_list, command, one_key))                                // if its not key one it must be key two: if its key one execute command  // try to execute the command found in buffer
     {if (!search_command(command_list, command, two_key)){return two_key;}}             // if its not key two then: if its key two execute command  // try to execute the command found in buffer
+    toggle_usb_led();                                                                   // who likes lights on all the time anyways (moths)
     return 0;                                                                           // return zero as nothing was found
+}
+
+/*
+Checks on core 1 working status, returns false if core 1 has ran into an error.
+*/
+static bool core_alive(){
+    while (1){
+        multicore_lockout_victim_init();                                                // Do victim stuff
+        if (mutex_try_enter(&ostrich_usb.data_flag, owner)){                            // Capture the flag
+            is_alive = ostrich_usb.keep_alive;                                          // See if core 0 is twitching
+            ostrich_usb.keep_alive = false;
+            mutex_exit(&ostrich_usb.data_flag);                                         // Have some dignity
+            break;                                                                      // break the chain
+        }        
+    }
+    if (!is_alive){                                                                     // check alive status of other core
+        alive_counter++;                                                                // timout based on counter (roughly 5 seconds)
+    }
+    else{
+        alive_counter = 0;                                                              // if core alive then reset counter
+    }
+    if (alive_counter == 0xFF){                                                         // Set max limit to 255 or (255 * 100us) core 1 very fast
+        return false;                                                                   // return false if core is dead
+    }
+    return true;                                                                        // return true if core 1 is working
 }
 
 /*
@@ -681,7 +702,7 @@ void ostrich_init(){
     uint8_t dev_cmd[2];                                                                 // 2 bytes for Developer command processing
     uint8_t* command = malloc(8192);                                                    // Cut out dynamic memory for the command: making sure it byte aligned <- this
     Command* command_list = malloc(64);                                                 // Cut out memory for Command Structure current size is (12 * 3 = 36)
-    //initialize_pins();                                                                // Call initalize pins here 
+    initialize_pins();                                                                  // Call initalize pins here
     // seting up the Command Struct with its command/function pair
     command_list[0] =  (Command){CMD_VV, post_version}; 
     command_list[1] =  (Command){CMD_Nx, deploy_nx}; 
@@ -691,15 +712,16 @@ void ostrich_init(){
     command_list[5] =  (Command){CMD_Wx, micro_write};  
     command_list[6] =  (Command){CMD_ZR, bulk_read};   
     command_list[7] =  (Command){CMD_ZW, bulk_write}; 
-    command_list[8] =  (Command){CMD_DS, start_log};   
-    command_list[9] =  (Command){CMD_F1, set_clean};
-    command_list[10] = (Command){CMD_F2, set_reset};
-    command_list[11] = (Command){CMD_RT, start_log};
+    command_list[8] =  (Command){CMD_F1, set_clean};
+    command_list[9] =  (Command){CMD_F2, set_reset};
+    command_list[10] = (Command){CMD_DS, read_and_forward};      
+    command_list[11] = (Command){CMD_RT, read_and_forward};
     command_list[12] = (Command){CMD_DR, read_and_forward};
     command_list[13] = (Command){CMD_DM, read_and_forward};
     command_list[14] = (Command){NUL_BY, NULL};
 
     while (1){
+        if (!core_alive()){break;}                                                      // check if core 1 is alive, if not alive show error light
         if (connected && !(upload_count % 8)){                                          // recognize we are connected then write RAM and close.
             bulk_update_mutexes();                                                      // go to dupicate binary to master and set connected true.
             connected = false;                                                          // set connection false so we do not keep writing to RAM
@@ -720,6 +742,25 @@ void ostrich_init(){
         memset(command, 0, 8192);                                                       // reset Ostrich command when done
         memset(log_cmd, 0, 2);                                                          // reset Datalog command when done
         memset(dev_cmd, 0, 2);                                                          // reset Developer command when done
-        sleep_us(200);                                                                  // Prevents mutex contention with core 1
+        sleep_us(200);                                                                  // Prevents mutex contention with core 1            
+    }
+    while (1){
+        if (DEVELOPER_CONSOLE){
+            developer_get_request(dev_cmd);                                             // read bytes for dev-log command
+            error = execute_command(command_list, dev_cmd);                             // try to execute the command found in buffer
+            if (error){unknown_command(error, 2);}                                      // send the command to Developer console if unknown
+            memset(dev_cmd, 0, 2);                                                      // reset Developer command when done
+        }
+        /*
+        Technically doesnt need a mutex
+        if no core to provide race condition.
+        Activate ERROR_LED here!
+        */
+        for (uint8_t i = 0; i < 4; i++){                                                // Blink twice per second to indicate core 1 or second core
+            toggle_err_led();                                                           // Toggle ERROR LED
+            sleep_ms(250);                                                              // Give time for user to realize its blinking
+        }
+        print("CORE_1 ERROR: Injection timed out.", -1, false);                         // Say in developer console that core 1 is dead
+        sleep_ms(1000);                                                                 // Sleep for 1 second
     }
 }

@@ -19,6 +19,7 @@ Is unused when DEVELOPER_CONSOLE is false.
 
 void print(char* message, int32_t value, bool hex){
     if (!DEVELOPER_CONSOLE){return;}
+    tud_task();
     char buffer[128];
     if (value == -1 && message != ""){                                                  // For string messages only
         snprintf(buffer, sizeof(buffer), "%s\r\n", message);                            // format printable data together
